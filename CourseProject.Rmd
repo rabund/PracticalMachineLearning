@@ -1,0 +1,141 @@
+---
+title: "Practical Machine Learning - Course Project"
+author: "Ralf Bund"
+date: "13 Juli 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+## Set up the environment
+
+```{R}
+require(data.table)
+require(plyr)
+require(dplyr)
+require(caret)
+require(parallel)
+require(doParallel)
+require(corrplot)
+
+Sys.setlocale(category = "LC_ALL", locale = "English")
+```
+
+## Load and clean up the data
+
+In the first step the csv files are loaded into the system. Looking at the data we saw, that there are three types of NA values "NA", "" and "#DIV/0!". We convert theese values during loading to NA.
+
+```{r}
+org.training <- data.frame(fread(".\\pml-training.csv", sep = ",", header = TRUE, 
+                      na.strings = c("NA", "", "#DIV/0!")))
+
+org.testing  <- data.frame(fread(".\\pml-testing.csv", sep = ",", header = TRUE, 
+                      na.strings = c("NA", "", "#DIV/0!")))
+
+```
+
+Next we clean up the training data. 
+
+```{R}
+names(org.training[1:5])
+```
+
+Columns 1 to 5 do not contain statistically relevant information. We remove theese columns.
+
+Now we are looking for columns containing data with nearly no variance and remove them from the data.
+
+In addition we are looking for columns holding more than 75% of NA values and removem them, too.  
+
+```{R}
+rmv <- c(1:5)
+rmv <- c(rmv, nearZeroVar(org.training))
+nbr.na <- data.frame(sapply(org.training, function(y) sum(length(which(is.na(y))))))
+names(nbr.na) <- c("nas")
+nbr.na$names <- row.names(nbr.na)
+nbr.na$pct <- nbr.na$nas / nrow(org.training)
+nbr.na <- filter(nbr.na, pct >= .75)
+rmv <- unique(c(rmv, which(names(org.training) %in% nbr.na$names)))
+wrk.training <- org.training[,-rmv]
+dim(wrk.training)
+```
+
+We have reduced the data set from 160 variables to 54.
+
+Now we are exploring the remaining data for highly correlated columns.
+
+```{R}
+corrs <- cor(wrk.training[sapply(wrk.training, is.numeric)])
+corrplot(corrs, method = "shade",type = "lower")
+
+```
+
+As we can see, there are some columns that are correlated. We remove those columns.
+
+```{R}
+ 
+rmv.cor <- findCorrelation(corrs)
+wrk.training <- wrk.training[, -rmv.cor]
+dim(wrk.training)
+```
+This step reduced the set to 47 columns.
+
+## Splitting the data
+
+Next we are splitting the data into a test and a training set.
+```{R}
+set.seed(54321)
+inTrain   <- createDataPartition(wrk.training$classe, p=3/4, list = FALSE)
+training  <- wrk.training[ inTrain,]
+testing   <- wrk.training[-inTrain,]
+
+```
+
+## Building and selecting the model
+
+We are using the training set to set up three models (random forrest [rf], generalized boosted regression model [gbm] and recursive partitioning and regression tree [rpart]). To speed up the process parallel processing is used.
+
+```{R}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+trainControl <- trainControl(method = "cv", number = 10, allowParallel = TRUE)
+fit.rf    <- suppressMessages(train(classe ~ ., data = training, method = "rf", trControl = trainControl))
+fit.gbm   <- suppressMessages(train(classe ~ ., data = training, method = "gbm",   trControl = trainControl))
+fit.rpart <- suppressMessages(train(classe ~ ., data = training, method = "rpart", trControl = trainControl))
+
+stopCluster(cluster)
+registerDoSEQ()
+```
+
+Next we are testing the models against the testing data, we have previously created. We use the models to predict the data, build confusion matrizes, print out the resulting table and show the accurancy of each model.
+
+```{R}
+pred.rf    <- predict(fit.rf,    newdata = testing)
+pred.gbm   <- predict(fit.gbm,   newdata = testing)
+pred.rpart <- predict(fit.rpart, newdata = testing)
+
+con.rf    <- confusionMatrix(testing$classe, pred.rf)
+con.gbm   <- confusionMatrix(testing$classe, pred.gbm)
+con.rpart <- confusionMatrix(testing$classe, pred.rpart)
+print("Table of rpar confusion matrix")
+con.rpart$table
+print("Table of gbm confusion matrix")
+con.gbm$table
+print("Table of rf confusion matrix")
+con.rf$table
+print(paste("Accuracy", round(con.rpart$overall["Accuracy"], 7), "of modell rpart"))
+print(paste("Accuracy", round(con.gbm$overall["Accuracy"]  , 7), "of modell gbm"))
+print(paste("Accuracy", round(con.rf$overall["Accuracy"]   , 7), "of modell rf"))
+```
+As easily can be seen, rf ist the most accurate model of the three. The accurancy is nearly 100%. Combining the models will not increase the accuracy significally.
+
+## Predicting using the orginal testing data
+
+Now we are using the rf model to predict with the testing data.
+
+```{R}
+pred.org <- predict(fit.rf, newdata = org.testing)
+pred.org
+```
