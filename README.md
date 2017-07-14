@@ -5,7 +5,7 @@ Author: Ralf Bund
 
 The included files belong to the peer-graded assignment. The following files are included:
 
-* READNE.md; this file
+* README.md; this file
 * CourseProject.Rmd; the R markdown file containing code and documentation of the project
 * CourseProject.html; result of the compiled markdown file
 
